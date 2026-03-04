@@ -5,22 +5,34 @@ import chromadb
 import streamlit as st
 import plotly.graph_objects as go
 from collections import Counter
-from sentence_transformers import SentenceTransformer
 from openai import OpenAI
 from dotenv import load_dotenv
 
 # ── Load environment variables ────────────────────────────────────────────────
 load_dotenv()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 # ── Load models ───────────────────────────────────────────────────────────────
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+# We now use OpenAI embeddings via API to avoid large model downloads on deployment.
 
 # ── ChromaDB ──────────────────────────────────────────────────────────────────
+# Use OpenAI embedding function to avoid loading SentenceTransformers locally
+from chromadb.utils import embedding_functions
+openai_ef = embedding_functions.OpenAIEmbeddingFunction(
+    api_key=OPENAI_API_KEY,
+    model_name="text-embedding-3-small"
+)
+
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
-collection = chroma_client.get_or_create_collection(name="resume_collection")
+try:
+    collection = chroma_client.get_collection(name="resume_collection_v3", embedding_function=openai_ef)
+except:
+    collection = chroma_client.create_collection(
+        name="resume_collection_v3",
+        embedding_function=openai_ef
+    )
 
 # ── OpenAI client ─────────────────────────────────────────────────────────────
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
 
 
@@ -97,7 +109,12 @@ def section_aware_chunks(text: str) -> list[dict]:
 
 
 def embed_text(texts: list[str]) -> list[list[float]]:
-    return embedding_model.encode(texts).tolist()
+    """Get embeddings from OpenAI API."""
+    response = openai_client.embeddings.create(
+        input=texts,
+        model="text-embedding-3-small"
+    )
+    return [data.embedding for data in response.data]
 
 
 def store_in_chroma(section_chunks: list[dict]) -> None:
@@ -293,7 +310,7 @@ if "retrieved_chunks" not in st.session_state:
 uploaded_file = st.file_uploader("Upload Resume (PDF)", type="pdf")
 jd = st.text_area("Paste Job Description", height=200)
 
-if st.button("🔍 Analyze", use_container_width=True):
+if st.button("🔍 Analyze", width="stretch"):
     if not uploaded_file:
         st.warning("Please upload a PDF resume.")
     elif not jd.strip():
@@ -344,7 +361,7 @@ if st.session_state["analysis_result"]:
     # ── Keyword Heatmap ───────────────────────────────────────────────
     st.subheader("🔥 Keyword Heatmap")
     fig = build_keyword_heatmap(analyzed_jd, resume_text)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     st.caption("🟢 Green = keyword found in your resume &nbsp;|&nbsp; 🔴 Red = missing from your resume")
 
     # ── AI Analysis ───────────────────────────────────────────────────
@@ -358,7 +375,7 @@ if st.session_state["analysis_result"]:
         "Click below to get a **tailored rewrite** of your resume that better matches this job description."
     )
 
-    if st.button("✍️ Rewrite My Resume for This JD", use_container_width=True):
+    if st.button("✍️ Rewrite My Resume for This JD", width="stretch"):
         with st.spinner("Rewriting your resume to match the JD..."):
             rewritten = rewrite_resume(jd, chunks)
             st.session_state["rewritten_resume"] = rewritten
@@ -376,5 +393,5 @@ if st.session_state["analysis_result"]:
             data=st.session_state["rewritten_resume"],
             file_name="rewritten_resume.txt",
             mime="text/plain",
-            use_container_width=True,
+            width="stretch",
         )
