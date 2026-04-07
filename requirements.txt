@@ -1,7 +1,7 @@
 streamlit
 openai
 pdfplumber
-chromadb
+chromadb==0.4.24
 plotly
 python-dotenv
 scikit-learn
